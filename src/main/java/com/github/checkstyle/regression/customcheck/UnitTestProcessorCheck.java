@@ -19,6 +19,7 @@
 
 package com.github.checkstyle.regression.customcheck;
 
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -27,6 +28,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import com.github.checkstyle.regression.data.ImmutableProperty;
 import com.github.checkstyle.regression.data.ModuleInfo;
@@ -50,24 +53,30 @@ public class UnitTestProcessorCheck extends AbstractCheck {
     private static final Map<String, Set<ModuleInfo.Property>> UNIT_TEST_TO_PROPERTIES =
             new LinkedHashMap<>();
 
+    private static String sModuleName;
+
+    public static void setModuleName(String moduleName) {
+        sModuleName = moduleName;
+    }
+
     @Override
     public int[] getDefaultTokens() {
         return new int[] {
-            TokenTypes.ANNOTATION,
+                TokenTypes.ANNOTATION,
         };
     }
 
     @Override
     public int[] getRequiredTokens() {
         return new int[] {
-            TokenTypes.ANNOTATION,
+                TokenTypes.ANNOTATION,
         };
     }
 
     @Override
     public int[] getAcceptableTokens() {
         return new int[] {
-            TokenTypes.ANNOTATION,
+                TokenTypes.ANNOTATION,
         };
     }
 
@@ -85,8 +94,9 @@ public class UnitTestProcessorCheck extends AbstractCheck {
                     if (isAddAttributeMethodCall(expr.getFirstChild(), configVariableName.get())) {
                         final DetailAST elist =
                                 expr.getFirstChild().findFirstToken(TokenTypes.ELIST);
-                        final String key = convertExprToText(elist.getFirstChild());
-                        final String value = convertExprToText(elist.getLastChild());
+                        final String key = convertExpressionToText(elist.getFirstChild().getFirstChild());
+                        final String value = convertExpressionToText(
+                                elist.getLastChild().getFirstChild());
                         properties.add(ImmutableProperty.builder().name(key).value(value).build());
                     }
                 }
@@ -131,6 +141,13 @@ public class UnitTestProcessorCheck extends AbstractCheck {
                     break;
                 }
             }
+            else if (ast.getType() == TokenTypes.EXPR
+                    && ast.getFirstChild().getType() == TokenTypes.ASSIGN) {
+                if (isCreateModuleConfigAssign(ast.getFirstChild())) {
+                    returnValue = Optional.of(ast.getFirstChild().getFirstChild().getText());
+                    break;
+                }
+            }
         }
 
         return returnValue;
@@ -158,10 +175,16 @@ public class UnitTestProcessorCheck extends AbstractCheck {
             result = false;
         }
         else {
-            final DetailAST exprChild = ast.getFirstChild().getFirstChild();
-            result = exprChild.getType() == TokenTypes.METHOD_CALL
-                    && exprChild.getFirstChild().getType() == TokenTypes.IDENT
-                    && "createModuleConfig".equals(exprChild.getFirstChild().getText());
+            final DetailAST methodCall;
+            if (ast.findFirstToken(TokenTypes.METHOD_CALL) != null) {
+                methodCall = ast.findFirstToken(TokenTypes.METHOD_CALL);
+            }
+            else {
+                methodCall = ast.getFirstChild().getFirstChild();
+            }
+            result = methodCall.getType() == TokenTypes.METHOD_CALL
+                    && methodCall.getFirstChild().getType() == TokenTypes.IDENT
+                    && "createModuleConfig".equals(methodCall.getFirstChild().getText());
         }
 
         return result;
@@ -209,12 +232,37 @@ public class UnitTestProcessorCheck extends AbstractCheck {
     }
 
     /**
-     * Converts an expression to raw text.
-     * @param ast the expression ast to convert
+     * Converts an expression content to raw text.
+     * @param ast the first child of expression ast to convert
      * @return the converted raw text
      */
-    private static String convertExprToText(DetailAST ast) {
-        final String original = ast.getFirstChild().getText();
-        return original.substring(1, original.length() - 1);
+    private String convertExpressionToText(DetailAST ast) {
+        String result = null;
+        if (ast.getType() == TokenTypes.STRING_LITERAL) {
+            final String original = ast.getText();
+            result = original.substring(1, original.length() - 1);
+        }
+        else if (ast.getType() == TokenTypes.PLUS) {
+            result = convertExpressionToText(ast.getFirstChild())
+                    + convertExpressionToText(ast.getLastChild());
+        }
+        else if (ast.getType() == TokenTypes.LITERAL_NULL) {
+            result = ast.getText();
+        }
+        else if (ast.getType() == TokenTypes.METHOD_CALL) {
+            final String line = getFileContents().getLine(ast.getLineNo() - 1);
+            final Pattern pattern = Pattern.compile(
+                    "\\.addAttribute\\(.+, (?:.+\\.)*(.+)\\.toString\\(\\)\\);");
+            final Matcher matcher = pattern.matcher(line);
+            if (matcher.find()) {
+                result = matcher.group(1);
+            }
+        }
+        if (ast.getType() == TokenTypes.IDENT) {
+            System.out.println("[variable] " + sModuleName);
+            result = "";
+        }
+
+        return result;
     }
 }

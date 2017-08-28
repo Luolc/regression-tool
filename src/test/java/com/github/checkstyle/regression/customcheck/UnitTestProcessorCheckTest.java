@@ -22,28 +22,50 @@ package com.github.checkstyle.regression.customcheck;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
 
+import java.io.File;
 import java.io.InputStreamReader;
 import java.net.URL;
 import java.nio.charset.Charset;
 import java.util.Arrays;
+import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.ServiceLoader;
 import java.util.Set;
 import java.util.stream.Collectors;
 
+import org.junit.Before;
 import org.junit.Test;
 
 import com.github.checkstyle.regression.data.ImmutableProperty;
 import com.github.checkstyle.regression.data.ModuleExtractInfo;
 import com.github.checkstyle.regression.data.ModuleInfo;
-import com.github.checkstyle.regression.extract.ExtractInfoProcessor;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.google.gson.TypeAdapterFactory;
 import com.google.gson.reflect.TypeToken;
 
 public class UnitTestProcessorCheckTest {
+    private List<ModuleExtractInfo> modules;
+
+    @Before
+    public void setUp() {
+        final GsonBuilder gsonBuilder = new GsonBuilder();
+        for (TypeAdapterFactory factory : ServiceLoader.load(TypeAdapterFactory.class)) {
+            gsonBuilder.registerTypeAdapterFactory(factory);
+        }
+        final Gson gson = gsonBuilder.create();
+        final String url = "https://gist.githubusercontent.com/Luolc/783aebf09efa1c738f9d535316e97895/raw/8082142d30414ae18ec9fceb260e10ebceb0c89f/checkstyle_modules_e51f9458.json";
+        try (InputStreamReader reader = new InputStreamReader(new URL(url).openStream(), Charset.forName("UTF-8"))) {
+            modules = gson.fromJson(reader, new TypeToken<List<ModuleExtractInfo>>() {
+            }.getType());
+        }
+        catch (Exception ex) {
+            // ignore
+        }
+        assertNotNull(modules);
+    }
+
     private static String getInputPath(String name) {
         return "src/test/resources/com/github/checkstyle/regression/customcheck/"
                 + "unittestprocessorcheck/" + name;
@@ -77,22 +99,41 @@ public class UnitTestProcessorCheckTest {
 
     @Test
     public void testAllModuleUnitTests() throws Exception {
-        final GsonBuilder gsonBuilder = new GsonBuilder();
-        for (TypeAdapterFactory factory : ServiceLoader.load(TypeAdapterFactory.class)) {
-            gsonBuilder.registerTypeAdapterFactory(factory);
-        }
-        final Gson gson = gsonBuilder.create();
-        final String url = "https://gist.githubusercontent.com/Luolc/783aebf09efa1c738f9d535316e97"
-                + "895/raw/9e02a1698adf8bc19e4188b12801d0c7ae575d8c/checkstyle_modules_e51f9458.json";
-        List<ModuleExtractInfo> modules;
-        try (InputStreamReader reader = new InputStreamReader(new URL(url).openStream(), Charset.forName("UTF-8"))) {
-            modules = gson.fromJson(reader, new TypeToken<List<ModuleExtractInfo>>() {}.getType());
-        }
-        assertNotNull(modules);
-
         final String repoPath = "D:\\personal\\develop\\java\\checkstyle\\checkstyle";
-//        Map<String, ModuleExtractInfo> map = ExtractInfoProcessor.getModuleExtractInfos(repoPath, "master");
-        int a = 1;
+        for (ModuleExtractInfo module : modules) {
+            if (Arrays.asList(
+//                    "AbstractClassNameCheck",
+//                    "AtclauseOrderCheck",
+                    "FileTabCharacterCheck",
+                    "EmptyForIteratorPadCheck",
+                    "EmptyForInitializerPadCheck",
+                    "ConstantNameCheck",
+                    "ClassFanOutComplexityCheck",
+                    "BeforeExecutionExclusionFileFilter",
+                    "Checker")
+                    .contains(module.name())) {
+                continue;
+            }
+            System.out.println(module.fullName());
+            final File file = new File(repoPath, "src/test/java/" + module.fullName().replaceAll("\\.", "/") + "Test.java");
+            UnitTestProcessorCheck.setModuleName(module.fullName());
+            UnitTestProcessorCheck.clearUnitTestToPropertiesMap();
+            CustomCheckProcessor.process(
+                    file.getAbsolutePath(),
+                    UnitTestProcessorCheck.class);
+            final Map<String, Set<ModuleInfo.Property>> map =
+                    UnitTestProcessorCheck.getUnitTestToPropertiesMap();
+            final Set<String> expected = module.properties().stream()
+                    .map(ModuleExtractInfo.ModuleProperty::name).collect(Collectors.toSet());
+            final Set<String> actual = map.values().stream()
+                    .flatMap(Collection::stream)
+                    .map(ModuleInfo.Property::name)
+                    .collect(Collectors.toSet());
+            expected.remove("tokens");
+            actual.remove("tokens");
+            assertEquals(expected, actual);
+            int a = 1;
+        }
     }
 
     private static void assertPropertiesEquals(Map<String, Set<ModuleInfo.Property>> map,
